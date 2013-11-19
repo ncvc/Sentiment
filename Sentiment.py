@@ -74,36 +74,66 @@ class Wordlist:
 		return wordDict
 
 
-# Generates a 
+# Generates a summary of the comment data as self.topics
+# self.topics - a dictionary of timeseries data, where the keys are topic words, e.g. 'apple', 'microsoft', etc.
+#               the values are lists, one element for each day of the year. Each element of the list is a collections.Counter
+#               object with the keys being words and the values being the number of times that word appears in a comment
+#               on a post of the given topic.
+#               { <topic>: [ Counter( { 'computer': 254, 'java': 24, ... } ), ... ], ... }
 class Preprocess:
-	def __init__(self):
+	def __init__(self, topicList):
 		stopwordsSet = set(stopwords.words('english'))
 		punctuation = set(string.punctuation)
 		self.ignoreWords = stopwordsSet.union(punctuation)
 
-		self.wordCounts = [collections.Counter() for i in xrange(365)]
+		self.topicList = [topic.lower() for topic in topicList]
+		self.topics = { topic: [collections.Counter() for i in xrange(365)] for topic in self.topicList }
 
 	@staticmethod
 	def loadWordCounts(filename):
 		return pickle.load(open(filename, 'rb'))
 
 	def saveWordCounts(self, filename):
-		pickle.dump(self.wordCounts, open(filename, 'wb'))
+		pickle.dump(self.topics, open(filename, 'wb'))
 
 	# Helper - count the words in a single comments
-	def preprocessComment(self, text, wordCount):
+	def preprocessComment(self, text):
+		wordCount = collections.Counter()
+
 		for sentence in sent_tokenize(text):
 			for word in word_tokenize(sentence):
-				# Don't bother with stop words
+				# Don't bother with stop words and punctuation
 				if word not in self.ignoreWords:
 					wordCount[word.decode('utf8')] += 1
 
-	# Preprocess the entire db
+		return wordCount
+
+	# Returns a list of the topics the post pertains to
+	def getPostTopics(self, post):
+		return [topic for topic in self.topicList if topic in post.title.lower()]
+
+	def getPosts(self):
+		return ['posts']
+
+	def getComments(self, post):
+		return ['comments']
+
+	# Preprocess the entire db and populate self.topics
 	def preprocess(self):
-		for comment in comments:
-			text = comment.text
-			day = comment.day
-			self.preprocessComment(text, self.wordCounts[day])
+		for post in self.getPosts():
+			topics = self.getPostTopics(post)
+
+			# Don't bother if there are no relevant topics
+			if len(topics) > 0:
+				topicWordCounts = [self.topics[topic] for topic in topics]
+				for comment in self.getComments(post):
+					text = comment.text
+					day = comment.day
+					commentWordCount = self.preprocessComment(text)
+
+					# add the comment's word count to the relevant day's wordcount in the topic
+					for topicWordCount in topicWordCounts:
+						topicWordCount[day] += commentWordCount
 
 
 # Uses the parsed wordlist to get a timeseries of sentiment scores
@@ -130,7 +160,9 @@ class SentimentAnalysis:
 
 
 if __name__ == '__main__':
-	preproc = Preprocess()
+	topicList = ['apple', 'microsoft', 'facebook', 'twitter', 'dell', 'intel', 'bitcoin']
+
+	preproc = Preprocess(topicList)
 	preproc.preprocess()
 	preproc.saveWordCounts('wordcount.p')
 	wordCounts = preproc.wordCounts
