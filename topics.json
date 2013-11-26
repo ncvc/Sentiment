@@ -1,0 +1,50 @@
+{
+  "aapl": [
+    "apple",
+    "iphone",
+    "mac",
+    "ipod"
+  ],
+  "msft": [
+    "microsoft",
+    "windows",
+    "windows phone",
+    "microsoft office",
+    "xbox",
+    "kinect"
+  ],
+  "bitcoin": [
+    "bitcoin",
+    "btc"
+  ],
+  "goog": [
+    "google",
+    "android",
+    "KitKat",
+    "Jelly Bean",
+    "Ice Cream Sandwich",
+    "Honeycomb"
+  ],
+  "fb": [
+    "facebook",
+    "fb",
+    "instagram"
+  ],
+  "twtr": [
+    "twitter"
+  ],
+  "dell": [
+    "dell",
+    "xps",
+    "alienware",
+    "inspiron"
+  ],
+  "intc": [
+    "intel",
+    "ivy bridge",
+    "sandy bridge",
+    "i7",
+    "i5",
+    "i3"
+  ]
+}
