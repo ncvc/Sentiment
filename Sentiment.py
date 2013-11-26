@@ -2,6 +2,11 @@ import string
 import collections
 import cPickle as pickle
 import json
+import urllib
+import datetime
+import csv
+import os
+
 
 from nltk.stem.wordnet import WordNetLemmatizer
 from nltk.corpus import stopwords
@@ -13,10 +18,11 @@ from pybrain.datasets import SupervisedDataSet
 from pybrain.supervised.trainers import BackpropTrainer
 
 WORDLIST_FILENAME = 'subjectivity_clues/subjclueslen1-HLTEMNLP05.tff'
-STOCK_DATA_FILENAME = 'stocks.whatever'
 DATASET_FILENAME = 'dataset.out'
 TOPICS_FILENAME = 'topics.json'
 WORDCOUNT_FILENAME = 'wordcount.p'
+STOCK_DATA_FOLDER = 'stock_data'
+
 POLARITY = { 'positive': 0, 'negative': 1, 'both': 2, 'neutral': 3 }
 
 
@@ -89,19 +95,15 @@ class Wordlist:
 #               on a post of the given topic.
 #               { <topic>: [ Counter( { 'computer': 254, 'java': 24, ... } ), ... ], ... }
 class Preprocess:
-	def __init__(self, topicsFilename=TOPICS_FILENAME):
+	def __init__(self, startDate, endDate, topicsFilename=TOPICS_FILENAME):
 		stopwordsSet = set(stopwords.words('english'))
 		punctuation = set(string.punctuation)
 		self.ignoreWords = stopwordsSet.union(punctuation)
 
 		self.loadTopics(topicsFilename)
 
-	@staticmethod
-	def loadWordCounts(filename):
-		return pickle.load(open(filename, 'rb'))
-
-	def saveWordCounts(self, filename):
-		pickle.dump((self.topicsWordCount, self.topicList), open(filename, 'wb'))
+		self.startDate = startDate
+		self.endDate = endDate
 
 	def loadTopics(self, filename):
 		topics = json.load(open(filename))
@@ -124,9 +126,11 @@ class Preprocess:
 	def getPostTopics(self, post):
 		return [topic for topic, keywords in self.topicList.iteritems() if any(keyword in post.title.lower() for keyword in keywords)]
 
+	# Returns all posts in the date range
 	def getPosts(self):
 		return ['posts']
 
+	# Returns all comments for the given post
 	def getComments(self, post):
 		return ['comments']
 
@@ -146,8 +150,6 @@ class Preprocess:
 					# add the comment's word count to the relevant day's wordcount in the topic
 					for relevantTopicWordCount in relevantTopicsWordCount:
 						relevantTopicWordCount[day] += commentWordCount
-
-		return self.topicsWordCount
 
 
 # Uses the parsed wordlist to get a timeseries of sentiment scores
@@ -174,25 +176,21 @@ class SentimentAnalysis:
 		return [self.getDayScore(wordCount) for wordCount in wordCounts]
 
 
-# Given a score timeseries and function to create a neural net, train the neural net to predict stocks
-class StockNeuralNet:
-	def __init__(self, createNN, numInputDays, scoreTs, loadDataSetFromFile=False, stockDataFilename=STOCK_DATA_FILENAME, dataSetFilename=DATASET_FILENAME):
+# Given a score timeseries and function to create a neural net, train the neural net to predict a target timeseries.
+# The past historySize inputs and targets are used as inputs to the neural net
+class NeuralNet:
+	def __init__(self, createNN, historySize, inputTs, targetTs, loadDataSetFromFile=False, dataSetFilename=DATASET_FILENAME):
 		self.trainedNet = None
-		self.numInputDays = numInputDays
-		self.scoreTs = scoreTs
+		self.historySize = historySize
+		self.inputTs = inputTs
+		self.targetTs = targetTs
 
-		self.untrainedNet = createNN(self.numInputDays)
-
-		self.loadStockData(stockDataFilename)
+		self.untrainedNet = createNN(self.historySize)
 
 		if loadDataSetFromFile:
 			self.loadDataSet(dataSetFilename)
 		else:
 			self.buildDataSet(dataSetFilename)
-
-	# Loads stock data from file into a timeseries (list)
-	def loadStockData(self, filename):
-		self.stockTs = []
 
 	# Load a DataSet from the given file
 	def loadDataSet(self, filename):
@@ -200,18 +198,16 @@ class StockNeuralNet:
 
 	# Convenience method to return the inputs for a given day
 	def getInput(self, day):
-		return tuple([self.scoreTs[day - j] for j in xrange(1, 1+self.numInputDays)] + [self.stockTs[day - j] for j in xrange(1, 1+self.numInputDays)])
+		return tuple([self.inputTs[day - j] for j in xrange(1, 1+self.historySize)] + [self.targetTs[day - j] for j in xrange(1, 1+self.historySize)])
 
 	# Creates a SupervisedDataSet from the given score and stock timeseries
 	def buildDataSet(self, filename):
-		if len(self.scoreTs) != len(self.stockTs):
-			print 'scoreTs != stockTs!!!!!!!!'
+		self.ds = SupervisedDataSet(self.historySize * 2, 1)
 
-		self.ds = SupervisedDataSet(self.numInputDays * 2, 1)
-
-		for i in xrange(self.numInputDays, len(self.scoreTs)):
-			# inputs - the last numInputDays of score and stock data
-			self.ds.addSample(self.getInput(i), (self.stockTs[i],))
+		# Hack because for some absurd reason the stocks close on weekends
+		for i in xrange(self.historySize, len(self.targetTs)):
+			# inputs - the last historySize of score and stock data
+			self.ds.addSample(self.getInput(i), (self.targetTs[i],))
 
 		self.ds.saveToFile(filename)
 
@@ -227,79 +223,126 @@ class StockNeuralNet:
 			print 'You haven\'t trained the network yet!'
 			return
 
-		return self.scoreTs[day], self.trainedNet.activate(getInput(day))
+		return self.inputTs[day], self.trainedNet.activate(getInput(day))
+
+	# Returns a feed-forward network
+	def createFFNet(self, historySize):
+		net = FeedForwardNetwork()
+
+		# Create and add layers
+		net.addInputModule(LinearLayer(historySize * 2, name='in'))
+		net.addModule(SigmoidLayer(5, name='hidden'))
+		net.addOutputModule(LinearLayer(1, name='out'))
+
+		# Create and add connections between the layers
+		net.addConnection(FullConnection(net['in'], net['hidden'], name='c1'))
+		net.addConnection(FullConnection(net['hidden'], net['out'], name='c2'))
+
+		# Preps the net for use
+		net.sortModules()
+
+		return net
+
+	# Returns a recurrent network
+	def createRecurrentNet(self, historySize):
+		net = RecurrentNetwork()
+
+		# Create and add layers	
+		net.addInputModule(LinearLayer(historySize * 2, name='in'))
+		net.addModule(SigmoidLayer(5, name='hidden'))
+		net.addOutputModule(LinearLayer(1, name='out'))
+
+		# Create and add connections between the layers
+		net.addConnection(FullConnection(net['in'], net['hidden'], name='c1'))
+		net.addConnection(FullConnection(net['hidden'], net['out'], name='c2'))
+		net.addRecurrentConnection(FullConnection(net['hidden'], net['hidden'], name='c3'))
+
+		# Preps the net for use
+		net.sortModules()
+
+		return net
 
 
+# Puts everything together and downloads stock data, analyzes sentiment, and generates neural nets for the given stocks
+class StockNeuralNet:
+	def __init__(self, startDate, endDate, wordCountFilename=WORDCOUNT_FILENAME):
+		self.startDate = startDate
+		self.endDate = endDate
+		self.wordCountFilename = wordCountFilename
 
-# Returns a feed-forward network
-def createFFNet(numInputDays):
-	net = FeedForwardNetwork()
+	# Loads stock data from file into a timeseries (list)
+	def loadStockData(self, stock):
+		filepath = os.path.join(STOCK_DATA_FOLDER, stock + '[%s,%s].csv' % (self.startDate, self.endDate))
 
-	# Create and add layers
-	net.addInputModule(LinearLayer(numInputDays * 2, name='in'))
-	net.addModule(SigmoidLayer(5, name='hidden'))
-	net.addOutputModule(LinearLayer(1, name='out'))
+		if not os.path.exists(filepath):
+			if not os.path.exists(STOCK_DATA_FOLDER):
+				os.makedirs(STOCK_DATA_FOLDER)
 
-	# Create and add connections between the layers
-	net.addConnection(FullConnection(net['in'], net['hidden'], name='c1'))
-	net.addConnection(FullConnection(net['hidden'], net['out'], name='c2'))
+			params = urllib.urlencode({         # Below is literally the worst API design. Classic Yahoo.
+				's': stock,
+				'a': self.startDate.month - 1,  # WHY
+				'b': self.startDate.day,
+				'c': self.startDate.year,
+				'd': self.endDate.month - 1,    # WHAT IS WRONG WITH YOU, YAHOO
+				'e': self.endDate.day,
+				'f': self.endDate.year,
+				'g': 'd',
+				'ignore': '.csv',               # WHAT COULD THIS POSSIBLY MEAN
+			})
+			url = 'http://ichart.yahoo.com/table.csv?%s' % params
+			try:
+				urllib.urlretrieve(url, filepath)
+			except urllib.ContentTooShortError as e:
+				outfile = open(filepath, "w")
+				outfile.write(e.content)
+				outfile.close()
 
-	# Preps the net for use
-	net.sortModules()
+				print 'Error retrieving stock %s' % stock
+				return
 
-	return net
+		return [row['Close'] for row in csv.DictReader(open(filepath))]
 
-# Returns a recurrent network
-def createRecurrentNet(numInputDays):
-	net = RecurrentNetwork()
+	def loadPreprocess(self):
+		return pickle.load(open(self.wordCountFilename, 'rb'))
 
-	# Create and add layers	
-	net.addInputModule(LinearLayer(numInputDays * 2, name='in'))
-	net.addModule(SigmoidLayer(5, name='hidden'))
-	net.addOutputModule(LinearLayer(1, name='out'))
+	def savePreprocess(self, preproc):
+		pickle.dump(preproc, open(self.wordCountFilename, 'wb'))
 
-	# Create and add connections between the layers
-	net.addConnection(FullConnection(net['in'], net['hidden'], name='c1'))
-	net.addConnection(FullConnection(net['hidden'], net['out'], name='c2'))
-	net.addRecurrentConnection(FullConnection(net['hidden'], net['hidden'], name='c3'))
+	def generateNeuralNets(self, loadPreprocessFromFile=True):
+		if loadPreprocessFromFile:
+			preproc = self.loadPreprocess()
+		else:
+			preproc = Preprocess(self.startDate, self.endDate)
+			preproc.preprocess()
+			self.savePreprocess(preproc)
 
-	# Preps the net for use
-	net.sortModules()
+		topicsNN = {}
+		sent = SentimentAnalysis()
+		for stock, topicWordCount in preproc.topicsWordCount.iteritems():
+			inputTs = sent.getScoreTimeseries(topicWordCount)
+			targetTs = self.loadStockData(stock)
 
-	return net
+			# Scale data linearly from [0,1]
+			minInput = min(inputTs)
+			maxInput = max(inputTs)
+			scaledInputTs = [float(val-minInput)/(maxInput-minInput) for val in inputTs]
+			minTarget = min(targetTs)
+			maxTarget = max(targetTs)
+			scaledTargetTs = [float(val-minTarget)/(maxTarget-minTarget) for val in targetTs]
 
+			nn = NeuralNet(createFFNet, 3, scaledInputTs, scaledTargetTs)
+			nn.train()
+			topicsNN[stock] = nn
 
-def generateTopicsWordCounts():
-	preproc = Preprocess()
-	topicsWordCount = preproc.preprocess()
-	preproc.saveWordCounts(WORDCOUNT_FILENAME)
-	return topicsWordCount
-
-
-def loadWordCounts():
-	return Preprocess.loadWordCounts(WORDCOUNT_FILENAME)
-
-
-def getTopicsNN():
-	topicsWordCount = generateWordCounts()
-	# topicsWordCount, topicList = loadWordCounts()
-
-	topicsNN = {}
-	sent = SentimentAnalysis()
-	for topic, topicWordCount in topicsWordCount.iteritems():
-		scoreTs = sent.getScoreTimeseries(topicWordCount)
-
-		nn = StockNeuralNet(createFFNet, 3, scoreTs)
-		nn.train()
-
-		topicsNN[topic] = nn
-
-	return topicsNN
+		return topicsNN
 
 
 if __name__ == '__main__':
-	# topicsNN = getTopicsNN()
+	print 'FIX TIMESERIES'
+	net = StockNeuralNet(datetime.date(2012, 1, 1), datetime.date(2013, 12, 31))
+	net.loadStockData('goog')
+	# net.generateNeuralNets()
 
-	nn = StockNeuralNet(createFFNet, 3, [])
-	nn.train()
-	actual, predicted = nn.predict(10)
+	# nn = NeuralNet(createFFNet, 3, [])
+	# nn.train()
+	# actual, predicted = nn.predict(10)
