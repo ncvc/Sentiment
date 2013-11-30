@@ -78,7 +78,7 @@ class DB:
 		if time == None:
 			story.time = None
 		else:
-			story.time = datetime.datetime.fromtimestamp(1160494499)
+			story.time = datetime.datetime.fromtimestamp(time)
 
 		# Write the new row to the database
 		story.save(force_insert=True)
