@@ -44,12 +44,19 @@ class DB:
 	def create_tables(self):
 		Story.create_table()
 
+	# Get story by id
+	def get_story(self, id):
+		return Story.get(Story.id == id)
+
+	# Get all comments in the date range
+	def get_comments(self, startDate, endDate):
+		return Story.select().where((Story.type == 'comment') & (Story.time.between(startDate, endDate)))
+
 	# Adds the story data to the db
 	def add_story(self, storyData):
 		story = Story()
 
 		story.id = storyData.get('id')
-		story.score = storyData.get('score')
 		story.kids = storyData.get('kids')
 		story.author = storyData.get('by')
 		story.text = storyData.get('text')
@@ -60,6 +67,12 @@ class DB:
 		story.dead = storyData.get('dead')
 		story.deleted = storyData.get('deleted')
 		story.parts = storyData.get('parts')
+
+		score = storyData.get('score')
+		if isinstance(score, (int, long)):
+			story.score = score
+		else:
+			story.score = 0
 
 		time = storyData.get('time')
 		if time == None:
