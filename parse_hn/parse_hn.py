@@ -8,13 +8,13 @@ from database import DB
 
 
 def parseStories(db):
-	storyNum = 6779397
+	storyNum = 1
 	errCount = 0
 	start = mid = time.time()
 
 	while True:
 		try:
-			with open('story/%i.json' % storyNum) as f:
+			with open('/home/ncvc/hn_json/story/%i.json' % storyNum) as f:
 				story = json.load(f)
 				db.add_story(story)
 
