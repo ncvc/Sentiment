@@ -3,6 +3,7 @@ import datetime
 import string
 import json
 import collections
+import time
 
 from nltk.tokenize import word_tokenize, sent_tokenize
 from nltk.corpus import stopwords
@@ -54,21 +55,23 @@ class Preprocess:
 	def preprocessComment(self, text):
 		wordCount = collections.Counter()
 
-		for sentence in sent_tokenize(text):
+		for sentence in sent_tokenize(text.lower()):
 			for word in word_tokenize(sentence):
 				# Don't bother with stop words and punctuation
 				if word not in self.ignoreWords:
-					wordCount[word.decode('utf8')] += 1
+					wordCount[word] += 1
 
 		return wordCount
 
 	# Returns the topic list of the given post title
 	def getTitleTopicList(self, title):
+		if title == None:
+			return []
 		return [topic for topic, keywords in self.topicKeywordDict.iteritems() if any(keyword in title.lower() for keyword in keywords)]
 
 	# Helper method to return the topics of the parent of an item
 	def getParentTopics(self, item):
-		parentId = item['parent']
+		parentId = item.parent
 
 		# Return the topics of the parent if the parent has already been processed
 		if parentId in self.itemTopics:
@@ -91,8 +94,13 @@ class Preprocess:
 	# Preprocess the entire db and populate self.topicsWordCounterTs
 	def preprocess(self, saveTs=True, filename=TS_FILENAME):
 		print 'preprocess start'
+		i = 0
+		start = mid = time.time()
 		for comment in self.db.get_comments(self.startDate, self.endDate):
-			print comment.text
+			i += 1
+			if i % 10000 == 1:
+				print i, time.time() - mid
+				mid = time.time()
 			relevantTopics = self.getCommentTopics(comment)
 
 			# Don't bother if there are no relevantTopics
@@ -100,13 +108,14 @@ class Preprocess:
 				commentWordCounter = self.preprocessComment(comment.text)
 
 				date = comment.time.date()
-				relevantTopicsWordCounter = [self.topicsWordCounterTs[date][topic] for topic in relevantTopics]
 				# add the comment's word count to the relevant day's wordcount in the topic
-				for relevantTopicWordCounter in relevantTopicsWordCounter:
-					relevantTopicWordCounter += commentWordCounter
+				for topic in relevantTopics:
+					self.topicsWordCounterTs[date][topic] += commentWordCounter
 
 		if saveTs:
 			self.saveTs(filename)
+
+		print 'Total', time.time() - start
 
 		return self.topicsWordCounterTs
 
@@ -117,4 +126,3 @@ if __name__ == '__main__':
 	with DB() as db:
 		p = Preprocess(startDate, endDate, db)
 		p.preprocess()
-		pickle.dump()

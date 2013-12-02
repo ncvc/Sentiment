@@ -49,8 +49,11 @@ class DB:
 		return Story.get(Story.id == id)
 
 	# Get all comments in the date range
-	def get_comments(self, startDate, endDate):
-		return Story.select().where((Story.type == 'comment') & (Story.time.between(startDate, endDate)))
+	def get_comments(self, startDate, endDate, resultsPerPage=10000):
+		numPages = Story.select().count() / resultsPerPage + 1
+		for page in xrange(numPages):
+			for comment in Story.select().where((Story.type == 'comment') & (Story.time.between(startDate, endDate))).paginate(page, resultsPerPage):
+				yield comment
 
 	# Adds the story data to the db
 	def add_story(self, storyData):

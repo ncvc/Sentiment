@@ -6,5 +6,5 @@ NOTE: I had to fix some syntax errors in the downloaded wordlist. Step up your g
 
 Dependencies
 ============
-* NLTK (http://nltk.org/) - Natural Language Toolkit with the WordNet and stopword corpora installed
+* NLTK (http://nltk.org/) - Natural Language Toolkit with the WordNet, stopwords, and punkt corpora installed
 * PyBrain (http://pybrain.org/docs/index.html)
