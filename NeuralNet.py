@@ -2,14 +2,36 @@ import urllib
 import datetime
 import csv
 import os
+import logging
 
 from pybrain.structure import FeedForwardNetwork, LinearLayer, SigmoidLayer, FullConnection, RecurrentNetwork
 from pybrain.datasets import SupervisedDataSet
 from pybrain.supervised.trainers import BackpropTrainer
 
+from Preprocess import TS_FILENAME, Preprocess, MultiTopicWordCounterTs
+from SentimentAnalysis import SentimentAnalysis
+from TimeSeries import TimeSeries
+
 
 DATASET_FILENAME = 'dataset.out'
 STOCK_DATA_FOLDER = 'stock_data'
+
+
+# Make a global logging object.
+logit = logging.getLogger("logit")
+logit.setLevel(logging.DEBUG)
+formatter = logging.Formatter("%(levelname)s %(asctime)s %(funcName)s:%(lineno)d - %(message)s")
+
+# Stream handler
+handler = logging.StreamHandler()
+handler.setFormatter(formatter)
+logit.addHandler(handler)
+
+# File handler
+fileHandler = logging.FileHandler("NeuralNet.log")
+fileHandler.setFormatter(formatter)
+fileHandler.setLevel(logging.DEBUG)
+logit.addHandler(fileHandler)
 
 
 # Given a score timeseries and function to create a neural net, train the neural net to predict a target timeseries.
@@ -34,14 +56,15 @@ class NeuralNet:
 
 	# Convenience method to return the inputs for a given day
 	def getInput(self, day):
-		return tuple([self.inputTs[day - j] for j in xrange(1, 1+self.historySize)] + [self.targetTs[day - j] for j in xrange(1, 1+self.historySize)])
+		return tuple([ts[day - j] for j in xrange(1, 1+self.historySize) for ts in (self.inputTs, self.targetTs)])
 
 	# Creates a SupervisedDataSet from the given score and stock timeseries
 	def buildDataSet(self, filename):
+		logit.info('Building dataset')
 		self.ds = SupervisedDataSet(self.historySize * 2, 1)
 
 		# Hack because for some absurd reason the stocks close on weekends
-		for i in xrange(self.historySize, len(self.targetTs)):
+		for i in xrange(self.historySize+1, len(self.targetTs)):
 			# inputs - the last historySize of score and stock data
 			self.ds.addSample(self.getInput(i), (self.targetTs[i],))
 
@@ -49,68 +72,76 @@ class NeuralNet:
 
 	# Train the neural net on the previously generated dataset
 	def train(self):
-		trainer = BackpropTrainer(self.untrainedNet, self.ds)
+		logit.info('Creating Trainer')
+		trainer = BackpropTrainer(self.untrainedNet, dataset=self.ds)
 
-		self.trainedNet = trainer.trainUntilConvergence()
+		logit.info('Training Neural Net')
+		for i in xrange(100):
+			logit.info('Epoch %i: error = %f' % (i, trainer.train()))
+		# self.trainedNet = trainer.trainUntilConvergence()
+		logit.info('Finished Training Neural Net')
 
 	# Uses the trained neural net to predict the stock at the given day and returns (actual, predicted)
 	def predict(self, day):
 		if self.trainedNet == None:
-			print 'You haven\'t trained the network yet!'
+			logit.warn("You haven\'t trained the network yet!")
 			return
 
-		return self.inputTs[day], self.trainedNet.activate(getInput(day))
+		return self.inputTs[day], self.trainedNet.activate(self.getInput(day))
 
-	# Returns a feed-forward network
-	def createFFNet(self, historySize):
-		net = FeedForwardNetwork()
 
-		# Create and add layers
-		net.addInputModule(LinearLayer(historySize * 2, name='in'))
-		net.addModule(SigmoidLayer(5, name='hidden'))
-		net.addOutputModule(LinearLayer(1, name='out'))
+# Returns a feed-forward network
+def createFFNet(historySize):
+	net = FeedForwardNetwork()
 
-		# Create and add connections between the layers
-		net.addConnection(FullConnection(net['in'], net['hidden'], name='c1'))
-		net.addConnection(FullConnection(net['hidden'], net['out'], name='c2'))
+	# Create and add layers
+	net.addInputModule(LinearLayer(historySize * 2, name='in'))
+	net.addModule(SigmoidLayer(5, name='hidden'))
+	net.addOutputModule(LinearLayer(1, name='out'))
 
-		# Preps the net for use
-		net.sortModules()
+	# Create and add connections between the layers
+	net.addConnection(FullConnection(net['in'], net['hidden'], name='c1'))
+	net.addConnection(FullConnection(net['hidden'], net['out'], name='c2'))
 
-		return net
+	# Preps the net for use
+	net.sortModules()
 
-	# Returns a recurrent network
-	def createRecurrentNet(self, historySize):
-		net = RecurrentNetwork()
+	return net
 
-		# Create and add layers	
-		net.addInputModule(LinearLayer(historySize * 2, name='in'))
-		net.addModule(SigmoidLayer(5, name='hidden'))
-		net.addOutputModule(LinearLayer(1, name='out'))
+# Returns a recurrent network
+def createRecurrentNet(historySize):
+	net = RecurrentNetwork()
 
-		# Create and add connections between the layers
-		net.addConnection(FullConnection(net['in'], net['hidden'], name='c1'))
-		net.addConnection(FullConnection(net['hidden'], net['out'], name='c2'))
-		net.addRecurrentConnection(FullConnection(net['hidden'], net['hidden'], name='c3'))
+	# Create and add layers	
+	net.addInputModule(LinearLayer(historySize * 2, name='in'))
+	net.addModule(SigmoidLayer(5, name='hidden'))
+	net.addOutputModule(LinearLayer(1, name='out'))
 
-		# Preps the net for use
-		net.sortModules()
+	# Create and add connections between the layers
+	net.addConnection(FullConnection(net['in'], net['hidden'], name='c1'))
+	net.addConnection(FullConnection(net['hidden'], net['out'], name='c2'))
+	net.addRecurrentConnection(FullConnection(net['hidden'], net['hidden'], name='c3'))
 
-		return net
+	# Preps the net for use
+	net.sortModules()
+
+	return net
 
 
 # Puts everything together and downloads stock data, analyzes sentiment, and generates neural nets for the given stocks
 class StockNeuralNet:
-	def __init__(self, startDate, endDate, wordCountFilename=WORDCOUNT_FILENAME):
+	def __init__(self, startDate, endDate, wordCounterTsFilename=TS_FILENAME):
 		self.startDate = startDate
 		self.endDate = endDate
-		self.wordCountFilename = wordCountFilename
+		self.wordCounterTs = Preprocess.loadTs(wordCounterTsFilename)
 
 	# Loads stock data from file into a timeseries (list)
 	def loadStockData(self, stock):
 		filepath = os.path.join(STOCK_DATA_FOLDER, stock + '[%s,%s].csv' % (self.startDate, self.endDate))
 
 		if not os.path.exists(filepath):
+			logit.info('Downloading Stock Data')
+
 			if not os.path.exists(STOCK_DATA_FOLDER):
 				os.makedirs(STOCK_DATA_FOLDER)
 
@@ -136,38 +167,34 @@ class StockNeuralNet:
 				print 'Error retrieving stock %s' % stock
 				return
 
-		return [row['Close'] for row in csv.DictReader(open(filepath))]
+		return TimeSeries({ datetime.datetime.strptime(row['Date'], '%Y-%m-%d').date(): float(row['Close']) for row in csv.DictReader(open(filepath)) })
 
-	def generateNeuralNets(self):
-		wordCounterTs = Preprocess.loadTs()
+	def generateNeuralNet(self, stock):
+		sent = SentimentAnalysis(logit)
 
-		topicsNN = {}
-		sent = SentimentAnalysis()
-		print 'FIX wordCounterTs handling'
-		for stock, topicWordCount in wordCounterTs.iteritems():
-			inputTs = sent.getScoreTimeseries(topicWordCount)
-			targetTs = self.loadStockData(stock)
+		topicWordCountTs = TimeSeries(self.wordCounterTs.getTopicTs(stock))
 
-			# Scale data linearly from [0,1]
-			minInput = min(inputTs)
-			maxInput = max(inputTs)
-			scaledInputTs = [float(val-minInput)/(maxInput-minInput) for val in inputTs]
-			minTarget = min(targetTs)
-			maxTarget = max(targetTs)
-			scaledTargetTs = [float(val-minTarget)/(maxTarget-minTarget) for val in targetTs]
+		inputTs = sent.getScoreTimeseries(topicWordCountTs)
 
-			nn = NeuralNet(createFFNet, 3, scaledInputTs, scaledTargetTs)
-			nn.train()
-			topicsNN[stock] = nn
+		targetTs = self.loadStockData(stock)
 
-		return topicsNN
+		# Scale data linearly from [0,1]
+		minInput = inputTs.getMinValue()
+		maxInput = inputTs.getMaxValue()
+		scaledInputTs = [float(val-minInput)/(maxInput-minInput) for val in inputTs.getValueList()]
+		minTarget = targetTs.getMinValue()
+		maxTarget = targetTs.getMaxValue()
+		scaledTargetTs = [float(val-minTarget)/(maxTarget-minTarget) for val in targetTs.getValueList()]
+
+		nn = NeuralNet(createFFNet, 3, scaledInputTs, scaledTargetTs)
+		nn.train()
+
+		return nn
 
 
 if __name__ == '__main__':
-	print 'FIX TIMESERIES'
-	net = StockNeuralNet(datetime.date(2012, 1, 1), datetime.date(2013, 12, 31))
-	net.loadStockData('goog')
-	# net.generateNeuralNets()
+	net = StockNeuralNet(datetime.date(2011, 1, 1), datetime.date(2011, 12, 31))
+	net.generateNeuralNet('goog')
 
 	# nn = NeuralNet(createFFNet, 3, [])
 	# nn.train()

@@ -15,14 +15,29 @@ TOPICS_FILENAME = 'topics.json'
 TS_FILENAME = 'ts.p'
 
 
-# Generates a summary of the comment data as self.topicsWordCounterTs
 # self.topicsWordCounterTs - a dictionary of timeseries data, where the keys are datetime.date objects, one for each day in the
 #           range [startDate, endDate]. The values are dictionaries with keys that are topic words, e.g. 'apple', 'microsoft', etc.
 #           The values are lists, where each element of the list is a collections.Counter object with the keys being words
 #           and the values being the number of times that word appears in a comment on a post of the given topic.
 #
-#           { <date1>: { <topic1>: [ Counter( { <word1>: <# of times word1 appears in the comments of posts categorized as <topic1>, ... } ), ... ], ... }, ... }
+#           { <topic1>: { <date1>: [ Counter( { <word1>: <# of times word1 appears in the comments of posts categorized as <topic1>, ... } ), ... ], ... }, ... }
 #
+class MultiTopicWordCounterTs:
+	def __init__(self, startDate, endDate, topics):
+		self.topicsWordCounterTs = {}
+		for topic in topics:
+			self.topicsWordCounterTs[topic] = {}
+			for day in xrange(startDate.toordinal(), endDate.toordinal()+1):
+				self.topicsWordCounterTs[topic][datetime.date.fromordinal(day)] = collections.Counter()
+
+	def addCommentCounter(self, wordCounter, date, topic):
+		self.topicsWordCounterTs[topic][date] += wordCounter
+
+	def getTopicTs(self, topic):
+		return self.topicsWordCounterTs[topic]
+
+
+# Generates a summary of the comment data as self.multiTopicWordCounterTs
 class Preprocess:
 	def __init__(self, startDate, endDate, db, topicsFilename=TOPICS_FILENAME):
 		stopwordsSet = set(stopwords.words('english'))
@@ -33,6 +48,7 @@ class Preprocess:
 		self.endDate = endDate
 
 		self.loadTopics(topicsFilename)
+		self.multiTopicWordCounterTs = MultiTopicWordCounterTs(startDate, endDate, self.topicKeywordDict.keys())
 
 		self.itemTopics = {}
 		self.db = db
@@ -42,14 +58,11 @@ class Preprocess:
 		return pickle.load(open(filename, 'rb'))
 
 	def saveTs(self, filename=TS_FILENAME):
-		pickle.dump(self.topicsWordCounterTs, open(filename, 'wb'))
+		pickle.dump(self.multiTopicWordCounterTs, open(filename, 'wb'))
 
 	def loadTopics(self, filename):
 		topics = json.load(open(filename))
 		self.topicKeywordDict = { topic.lower(): [ keyword.lower() for keyword in keywords + [topic] ] for topic, keywords in topics.iteritems() }
-		self.topicsWordCounterTs = {}
-		for day in xrange(self.startDate.toordinal(), self.endDate.toordinal()+1):
-			self.topicsWordCounterTs[datetime.date.fromordinal(day)] = { topic: collections.Counter() for topic in self.topicKeywordDict.iterkeys() }
 
 	# Helper - count the individual words in a single comment
 	def preprocessComment(self, text):
@@ -91,16 +104,16 @@ class Preprocess:
 
 		return self.getParentTopics(comment)
 
-	# Preprocess the entire db and populate self.topicsWordCounterTs
+	# Preprocess the entire db and populate self.multiTopicWordCounterTs
 	def preprocess(self, saveTs=True, filename=TS_FILENAME):
 		print 'preprocess start'
 		i = 0
-		start = mid = time.time()
+		start = mid = time.clock()
 		for comment in self.db.get_comments(self.startDate, self.endDate):
 			i += 1
 			if i % 10000 == 1:
-				print i, time.time() - mid
-				mid = time.time()
+				print i, time.clock() - mid
+				mid = time.clock()
 			relevantTopics = self.getCommentTopics(comment)
 
 			# Don't bother if there are no relevantTopics
@@ -110,14 +123,15 @@ class Preprocess:
 				date = comment.time.date()
 				# add the comment's word count to the relevant day's wordcount in the topic
 				for topic in relevantTopics:
-					self.topicsWordCounterTs[date][topic] += commentWordCounter
+					self.multiTopicWordCounterTs.addCommentCounter(commentWordCounter, date, topic)
+
 
 		if saveTs:
 			self.saveTs(filename)
 
-		print 'Total', time.time() - start
+		print 'Total', time.clock() - start
 
-		return self.topicsWordCounterTs
+		return self.multiTopicWordCounterTs
 
 if __name__ == '__main__':
 	startDate = datetime.datetime(2011, 1, 1)
@@ -125,4 +139,4 @@ if __name__ == '__main__':
 
 	with DB() as db:
 		p = Preprocess(startDate, endDate, db)
-		p.preprocess()
+		p.preprocess('2.p')

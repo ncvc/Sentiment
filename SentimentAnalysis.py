@@ -1,5 +1,11 @@
+import time
+
 from nltk.stem.wordnet import WordNetLemmatizer
 from nltk.corpus.reader.wordnet import POS_LIST
+
+from Preprocess import Preprocess, MultiTopicWordCounterTs
+from TimeSeries import TimeSeries
+
 
 WORDLIST_FILENAME = 'subjectivity_clues/subjclueslen1-HLTEMNLP05.tff'
 POLARITY = { 'positive': 0, 'negative': 1, 'both': 2, 'neutral': 3 }
@@ -69,23 +75,41 @@ class Wordlist:
 
 # Uses the parsed wordlist to get a timeseries of sentiment scores
 class SentimentAnalysis:
-	def __init__(self):
+	def __init__(self, logit):
+		logit.info('Sentiment Init')
 		self.wl = Wordlist()
+
+		self.logit = logit
 
 	# Returns the sentiment score for a given day
 	def getDayScore(self, wordCount):
 		positiveScore = 0
 		negativeScore = 0
-		for word, count in self.wordCount.iteritems():
+		for word, count in wordCount.iteritems():
+			# print word.encode(ignore), count
 			wordDict = self.wl.getWordDict(word)
 
-			if wordDict['polarity'] == POLARITY['positive']:
-				positiveScore += count
-			elif wordDict['polarity'] == POLARITY['negative']:
-				negativeScore += count
+			if wordDict != None:
+				if wordDict['polarity'] == POLARITY['positive']:
+					positiveScore += count
+				elif wordDict['polarity'] == POLARITY['negative']:
+					negativeScore += count
+
+		if negativeScore == 0:
+			return float(positiveScore)
 
 		return float(positiveScore) / negativeScore
 
 	# Return the score timeseries as a list
-	def getScoreTimeseries(self, wordCounts):
-		return [self.getDayScore(wordCount) for wordCount in wordCounts]
+	def getScoreTimeseries(self, wordCounter):
+		self.logit.info('Analyzing Sentiment')
+		return wordCounter.mapValues(self.getDayScore)
+
+
+if __name__ == '__main__':
+	ts = Preprocess.loadTs()
+
+	sent = SentimentAnalysis()
+	t=time.clock()
+	a = sent.getScoreTimeseries(TimeSeries(ts.getTopicTs('msft')))
+	print time.clock() - t
