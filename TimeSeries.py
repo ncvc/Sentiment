@@ -38,7 +38,7 @@ class TimeSeries:
 		return [val for date, val in sorted(self.ts.items())]
 
 	def mapValues(self, function):
-		return TimeSeries({date: function(value) for date, value in sorted(self.ts.items())})
+		return TimeSeries({date: function(value) for date, value in self.ts.items()})
 
 
 def dateIterator(startDate, endDate, backward=False):

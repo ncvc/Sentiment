@@ -30,7 +30,7 @@ class MultiTopicWordCounterTs:
 			self.topicsWordCounterTs[topic] = TimeSeries({ date: collections.Counter() for date in dateIterator(startDate, endDate) })
 
 	def addCommentCounter(self, wordCounter, date, topic):
-		self.topicsWordCounterTs[topic][date] += wordCounter
+		self.topicsWordCounterTs[topic].ts[date] += wordCounter
 
 	def getTopicTs(self, topic):
 		return self.topicsWordCounterTs[topic]
@@ -133,8 +133,8 @@ class Preprocess:
 		return self.multiTopicWordCounterTs
 
 if __name__ == '__main__':
-	startDate = datetime.datetime(2011, 1, 1)
-	endDate = datetime.datetime(2012, 1, 1)
+	startDate = datetime.date(2011, 1, 1)
+	endDate = datetime.date(2012, 1, 1)
 
 	with DB() as db:
 		p = Preprocess(startDate, endDate, db)
