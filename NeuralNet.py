@@ -3,6 +3,7 @@ import datetime
 import csv
 import os
 import logging
+import itertools
 
 from pybrain.structure import FeedForwardNetwork, LinearLayer, SigmoidLayer, FullConnection, RecurrentNetwork
 from pybrain.datasets import SupervisedDataSet
@@ -37,10 +38,10 @@ logit.addHandler(fileHandler)
 # Given a score timeseries and function to create a neural net, train the neural net to predict a target timeseries.
 # The past historySize inputs and targets are used as inputs to the neural net
 class NeuralNet:
-	def __init__(self, createNN, historySize, inputTs, targetTs, loadDataSetFromFile=False, dataSetFilename=DATASET_FILENAME):
+	def __init__(self, createNN, historySize, scoreTs, targetTs, loadDataSetFromFile=False, dataSetFilename=DATASET_FILENAME):
 		self.trainedNet = None
 		self.historySize = historySize
-		self.inputTs = inputTs
+		self.scoreTs = scoreTs
 		self.targetTs = targetTs
 
 		self.untrainedNet = createNN(self.historySize)
@@ -55,8 +56,9 @@ class NeuralNet:
 		self.ds = SupervisedDataSet.loadFromFile(filename)
 
 	# Convenience method to return the inputs for a given day
-	def getInput(self, day):
-		return tuple([ts[day - j] for j in xrange(1, 1+self.historySize) for ts in (self.inputTs, self.targetTs)])
+	def getInputs(self, date):
+		timedelta = datetime.timedelta(1)
+		return tuple(itertools.chain.from_iterable((ts.pastNVals(date - timedelta, self.historySize) for ts in (self.scoreTs, self.targetTs))))
 
 	# Creates a SupervisedDataSet from the given score and stock timeseries
 	def buildDataSet(self, filename):
@@ -64,9 +66,9 @@ class NeuralNet:
 		self.ds = SupervisedDataSet(self.historySize * 2, 1)
 
 		# Hack because for some absurd reason the stocks close on weekends
-		for i in xrange(self.historySize+1, len(self.targetTs)):
+		for date, val in self.targetTs.getItems()[self.historySize+1:]:
 			# inputs - the last historySize of score and stock data
-			self.ds.addSample(self.getInput(i), (self.targetTs[i],))
+			self.ds.addSample(self.getInputs(date), (self.targetTs.getVal(date),))
 
 		self.ds.saveToFile(filename)
 
@@ -81,13 +83,13 @@ class NeuralNet:
 		# self.trainedNet = trainer.trainUntilConvergence()
 		logit.info('Finished Training Neural Net')
 
-	# Uses the trained neural net to predict the stock at the given day and returns (actual, predicted)
-	def predict(self, day):
+	# Uses the trained neural net to predict the stock at the given date and returns (actual, predicted)
+	def predict(self, date):
 		if self.trainedNet == None:
 			logit.warn("You haven\'t trained the network yet!")
 			return
 
-		return self.inputTs[day], self.trainedNet.activate(self.getInput(day))
+		return self.targetTs.getVal(date), self.trainedNet.activate(self.getInputs(date))
 
 
 # Returns a feed-forward network
@@ -174,17 +176,17 @@ class StockNeuralNet:
 
 		topicWordCountTs = TimeSeries(self.wordCounterTs.getTopicTs(stock))
 
-		inputTs = sent.getScoreTimeseries(topicWordCountTs)
+		scoreTs = sent.getScoreTimeseries(topicWordCountTs)
 
 		targetTs = self.loadStockData(stock)
 
 		# Scale data linearly from [0,1]
-		minInput = inputTs.getMinValue()
-		maxInput = inputTs.getMaxValue()
-		scaledInputTs = [float(val-minInput)/(maxInput-minInput) for val in inputTs.getValueList()]
+		minInput = scoreTs.getMinValue()
+		maxInput = scoreTs.getMaxValue()
+		scaledInputTs = scoreTs.mapValues(lambda val: float(val-minInput)/(maxInput-minInput))
 		minTarget = targetTs.getMinValue()
 		maxTarget = targetTs.getMaxValue()
-		scaledTargetTs = [float(val-minTarget)/(maxTarget-minTarget) for val in targetTs.getValueList()]
+		scaledTargetTs = targetTs.mapValues(lambda val: float(val-minTarget)/(maxTarget-minTarget))
 
 		nn = NeuralNet(createFFNet, 3, scaledInputTs, scaledTargetTs)
 		nn.train()
@@ -193,7 +195,8 @@ class StockNeuralNet:
 
 
 if __name__ == '__main__':
-	net = StockNeuralNet(datetime.date(2011, 1, 1), datetime.date(2011, 12, 31))
+	filename = 'C:\\Users\\nvcar_000\\Dropbox\\ts.p'
+	net = StockNeuralNet(datetime.date(2011, 1, 1), datetime.date(2011, 12, 31), wordCounterTsFilename=filename)
 	net.generateNeuralNet('goog')
 
 	# nn = NeuralNet(createFFNet, 3, [])

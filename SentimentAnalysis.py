@@ -101,9 +101,9 @@ class SentimentAnalysis:
 		return float(positiveScore) / negativeScore
 
 	# Return the score timeseries as a list
-	def getScoreTimeseries(self, wordCounter):
+	def getScoreTimeseries(self, wordCounterTs):
 		self.logit.info('Analyzing Sentiment')
-		return wordCounter.mapValues(self.getDayScore)
+		return wordCounterTs.mapValues(self.getDayScore)
 
 
 if __name__ == '__main__':

@@ -9,6 +9,7 @@ from nltk.tokenize import word_tokenize, sent_tokenize
 from nltk.corpus import stopwords
 
 from parse_hn.database import DB
+from TimeSeries import TimeSeries, dateIterator
 
 
 TOPICS_FILENAME = 'topics.json'
@@ -26,9 +27,7 @@ class MultiTopicWordCounterTs:
 	def __init__(self, startDate, endDate, topics):
 		self.topicsWordCounterTs = {}
 		for topic in topics:
-			self.topicsWordCounterTs[topic] = {}
-			for day in xrange(startDate.toordinal(), endDate.toordinal()+1):
-				self.topicsWordCounterTs[topic][datetime.date.fromordinal(day)] = collections.Counter()
+			self.topicsWordCounterTs[topic] = TimeSeries({ date: collections.Counter() for date in dateIterator(startDate, endDate) })
 
 	def addCommentCounter(self, wordCounter, date, topic):
 		self.topicsWordCounterTs[topic][date] += wordCounter
@@ -135,7 +134,7 @@ class Preprocess:
 
 if __name__ == '__main__':
 	startDate = datetime.datetime(2011, 1, 1)
-	endDate = datetime.datetime(2011, 12, 31)
+	endDate = datetime.datetime(2012, 1, 1)
 
 	with DB() as db:
 		p = Preprocess(startDate, endDate, db)
