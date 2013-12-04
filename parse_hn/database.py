@@ -51,7 +51,7 @@ class DB:
 	# Get all comments in the date range
 	# Note: Do manual pagination because MySQL LIMIT's OFFSET parameter is super slow when the offset gets large
 	def get_comments(self, startDate, endDate, resultsPerPage=10000):
-		adjustedEndDate = endDate - datetime.timedelta(-1)
+		adjustedEndDate = endDate - datetime.timedelta(1)
 		numPages = int(Story.select().where((Story.type == 'comment') & (Story.time.between(startDate, adjustedEndDate))).count() / resultsPerPage) + 1
 		lastId = 0
 		for page in xrange(numPages):
