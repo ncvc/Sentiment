@@ -158,7 +158,16 @@ class NeuralNet:
 				if (today - yesterdayTarget) * (todayTarget - yesterdayTarget) > 0:
 					correct += 1
 			dirAcc = float(correct) / (len(x) - 1)
-			logit.info('%s Directional Accuracy: %f' % (label, dirAcc))
+			logit.info('%s Directional Accuracy from actual: %f' % (label, dirAcc))
+
+			correct = 0
+			for date in x[1:]:
+				today, yesterday = predictedTs.pastNVals(date, 2)
+				todayTarget, yesterdayTarget = actualTargetTs.pastNVals(date, 2)
+				if (today - yesterday) * (todayTarget - yesterdayTarget) > 0:
+					correct += 1
+			dirAcc = float(correct) / (len(x) - 1)
+			logit.info('%s Directional Accuracy from prediction: %f' % (label, dirAcc))
 
 			# Prediction plot
 			plt.subplot(211)
