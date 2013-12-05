@@ -40,6 +40,9 @@ class TimeSeries:
 	def mapValues(self, function):
 		return TimeSeries({date: function(value) for date, value in self.ts.items()})
 
+	def getDateList(self):
+		return sorted(self.ts.keys())
+
 
 def dateIterator(startDate, endDate, backward=False):
 	currentDate = startDate

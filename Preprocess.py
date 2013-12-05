@@ -64,14 +64,14 @@ class Preprocess:
 		self.topicKeywordDict = { topic.lower(): [ keyword.lower() for keyword in keywords + [topic] ] for topic, keywords in topics.iteritems() }
 
 	# Helper - count the individual words in a single comment
-	def preprocessComment(self, text):
+	def preprocessComment(self, text, mult=1):
 		wordCount = collections.Counter()
 
 		for sentence in sent_tokenize(text.lower()):
 			for word in word_tokenize(sentence):
 				# Don't bother with stop words and punctuation
 				if word not in self.ignoreWords:
-					wordCount[word] += 1
+					wordCount[word] += 1 * mult
 
 		return wordCount
 
@@ -116,7 +116,7 @@ class Preprocess:
 			relevantTopics = self.getCommentTopics(comment)
 
 			# Don't bother if there are no relevantTopics
-			if len(relevantTopics) > 0:
+			if len(relevantTopics) > 0 and comment.score > 50:
 				commentWordCounter = self.preprocessComment(comment.text)
 
 				date = comment.time.date()
@@ -138,4 +138,4 @@ if __name__ == '__main__':
 
 	with DB() as db:
 		p = Preprocess(startDate, endDate, db)
-		p.preprocess('2.p')
+		p.preprocess(filename='ts-greater-than-50-score.p')

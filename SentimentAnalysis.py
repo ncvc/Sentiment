@@ -76,7 +76,7 @@ class Wordlist:
 # Uses the parsed wordlist to get a timeseries of sentiment scores
 class SentimentAnalysis:
 	def __init__(self, logit):
-		logit.info('Sentiment Init')
+		logit.debug('Sentiment Init')
 		self.wl = Wordlist()
 
 		self.logit = logit
@@ -102,7 +102,7 @@ class SentimentAnalysis:
 
 	# Return the score timeseries as a list
 	def getScoreTimeseries(self, wordCounterTs):
-		self.logit.info('Analyzing Sentiment')
+		self.logit.debug('Analyzing Sentiment')
 		return wordCounterTs.mapValues(self.getDayScore)
 
 
