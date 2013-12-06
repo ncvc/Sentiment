@@ -1,6 +1,8 @@
 import datetime
 
 
+# Used to represent a time series. Internally represented as a dictionary where the keys are datetime.date objects
+# and the values are the values at the corresponding date
 class TimeSeries:
 	def __init__(self, tsDict=None):
 		if tsDict == None:
@@ -39,6 +41,9 @@ class TimeSeries:
 
 	def mapValues(self, function):
 		return TimeSeries({date: function(value) for date, value in self.ts.items()})
+
+	def getDeltaTs(self):
+		return TimeSeries({date: (value - self.pastNVals(date - datetime.timedelta(1), 1)[0]) for date, value in self.getItems()[1:]})
 
 	def getDateList(self):
 		return sorted(self.ts.keys())

@@ -13,6 +13,10 @@ from pybrain.supervised.trainers import BackpropTrainer
 import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter
 
+from statsmodels.tsa.stattools import grangercausalitytests
+
+import numpy
+
 from Preprocess import TS_FILENAME, Preprocess, MultiTopicWordCounterTs
 from SentimentAnalysis import SentimentAnalysis
 from TimeSeries import TimeSeries
@@ -125,6 +129,9 @@ class NeuralNet:
 	def predictTs(self, dateList):
 		return TimeSeries({ date: self.predict(self.getInputs(date)) for date in dateList })
 
+	def plotTs(self):
+		pass
+
 	def plotResult(self):
 		targetX, targetY = zip(*self.targetTs.getItems())
 		targetY = [self.unscale(y) for y in targetY]
@@ -148,7 +155,14 @@ class NeuralNet:
 			mse = sum((e**2 for e in error)) / len(x)
 			logit.info('%s MSE: %f' % (label, mse))
 
-			mape = sum([abs(float(predictedTs.getVal(date) - actualTargetTs.getVal(date)) / actualTargetTs.getVal(date)) for date in x]) / len(x) * 100.0
+			mape = 0
+			avg = sum([actualTargetTs.getVal(date) for date in x]) / len(x)
+			for date in x:
+				divisor = actualTargetTs.getVal(date)
+				if divisor == 0:
+					divisor = avg
+				mape += abs(float(predictedTs.getVal(date) - actualTargetTs.getVal(date)) / divisor)
+			mape /= len(x) * 100.0
 			logit.info('%s MAPE: %f' % (label, mape))
 
 			correct = 0
@@ -160,14 +174,14 @@ class NeuralNet:
 			dirAcc = float(correct) / (len(x) - 1)
 			logit.info('%s Directional Accuracy from actual: %f' % (label, dirAcc))
 
-			correct = 0
-			for date in x[1:]:
-				today, yesterday = predictedTs.pastNVals(date, 2)
-				todayTarget, yesterdayTarget = actualTargetTs.pastNVals(date, 2)
-				if (today - yesterday) * (todayTarget - yesterdayTarget) > 0:
-					correct += 1
-			dirAcc = float(correct) / (len(x) - 1)
-			logit.info('%s Directional Accuracy from prediction: %f' % (label, dirAcc))
+			# correct = 0
+			# for date in x:
+			# 	today = predictedTs.getVal(date)
+			# 	todayTarget = actualTargetTs.getVal(date)
+			# 	if today * todayTarget > 0 or (todayTarget == 0 and abs(today) < 0.001):
+			# 		correct += 1
+			# dirAcc = float(correct) / len(x)
+			# logit.info('%s Directional Accuracy: %f' % (label, dirAcc))
 
 			# Prediction plot
 			plt.subplot(211)
@@ -297,8 +311,8 @@ class StockNeuralNet:
 		return TimeSeries({ datetime.datetime.strptime(row['Date'], '%Y-%m-%d').date(): float(row['Close']) for row in csv.DictReader(open(filepath)) })
 
 	def generateNeuralNet(self, stock, loadDataSetFromFile=False):
-		scoreTs = self.loadScoreTs(stock)
 		targetTs = self.loadStockData(stock)
+		scoreTs = self.loadScoreTs(stock)
 
 		# Scale data linearly from [0,1]
 		minInput = scoreTs.getMinValue()
@@ -320,23 +334,46 @@ class StockNeuralNet:
 
 		return nn
 
+	def getGrangerCausality(self, stock, maxlag=20):
+		noZeros = lambda val: 0.001 if val == 0 else val
+		targetTs = self.loadStockData(stock).getDeltaTs().mapValues(noZeros)
+		scoreTs = self.loadScoreTs(stock).mapValues(noZeros)
+
+		x = [[],[]]
+		for date in targetTs.getDateList():
+			x[0].append(targetTs.getVal(date))
+			x[1].append(scoreTs.getVal(date))
+
+		x = numpy.transpose(numpy.asarray(x))
+
+		results = grangercausalitytests(x, maxlag, verbose=False)
+		pValue = {lag: results[lag][0]['params_ftest'][1] for lag in xrange(1, maxlag+1)}
+
+		return pValue
+
 
 if __name__ == '__main__':
 	stocks = ['intc', 'aapl', 'msft', 'goog', 'dell'] # , 'fb', 'twtr'
-	files = ['ts-greater-than-10-score.p', 'ts-greater-than-100-score.p', 'ts-greater-than-50-score.p', 'ts-pg-only-with-score-mult.p', 'ts-pg-only.p', 'ts-pos-score.p', 'ts-with-score-multiplier.p', 'ts.p']
-	for filename in files:
-		for stock in stocks:
-			logit.info('file: %s' % filename)
-			logit.info('stock: %s' % stock)
-			net = StockNeuralNet(datetime.date(2011, 1, 1), datetime.date(2011, 12, 31), wordCounterTsFilename=filename)
-			nn = net.generateNeuralNet(stock, loadDataSetFromFile=False)
-			nn.plotResult()
+	files = ['ts-greater-than-10-with-score-mult.p', 'ts-greater-than-10-score.p', 'ts-pos-score.p', 'ts-with-score-multiplier.p', 'ts.p'] #, 'ts-pg-only-with-score-mult.p', 'ts-pg-only.p', 'ts-greater-than-50-score.p', 'ts-greater-than-100-score.p']
 
-			fig = plt.gcf()
-			fig.canvas.set_window_title('stock %s, file %s' % (stock, filename))
-			plt.draw()
+	# for filename in files:
+	filename = 'ts-greater-than-10-with-score-mult.p' #'ts-greater-than-10-score.p'
+	for stock in stocks:
+		logit.info('file: %s' % filename)
+		logit.info('stock: %s' % stock)
+		# net = StockNeuralNet(datetime.date(2011, 1, 1), datetime.date(2011, 12, 31), wordCounterTsFilename=filename)
+		# pValues = net.getGrangerCausality(stock)
+		# print pValues
 
-	plt.show()
+		net = StockNeuralNet(datetime.date(2011, 1, 1), datetime.date(2011, 12, 31), wordCounterTsFilename=filename)
+		nn = net.generateNeuralNet(stock, loadDataSetFromFile=False)
+		nn.plotResult()
+
+		# fig = plt.gcf()
+		# fig.canvas.set_window_title('stock %s, file %s' % (stock, filename))
+		# plt.draw()
+
+	# plt.show()
 
 	# nn = NeuralNet(createFFNet, 3, [])
 	# nn.train()

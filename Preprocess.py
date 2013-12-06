@@ -16,12 +16,11 @@ TOPICS_FILENAME = 'topics.json'
 TS_FILENAME = 'ts.p'
 
 
-# self.topicsWordCounterTs - a dictionary of timeseries data, where the keys are datetime.date objects, one for each day in the
-#           range [startDate, endDate]. The values are dictionaries with keys that are topic words, e.g. 'apple', 'microsoft', etc.
-#           The values are lists, where each element of the list is a collections.Counter object with the keys being words
-#           and the values being the number of times that word appears in a comment on a post of the given topic.
+# self.topicsWordCounterTs - a dictionary of timeseries data, where the keys are topics and the values are TimeSeries objects.
+#           The values of each time series object is a collections.Counter object with the keys being words and the values being
+#           the number of times that word appears in a comment on a post of the given topic.
 #
-#           { <topic1>: { <date1>: [ Counter( { <word1>: <# of times word1 appears in the comments of posts categorized as <topic1>, ... } ), ... ], ... }, ... }
+#           { <topic1>: TimeSeries({ <date1>: Counter( { <word1>: <# of times word1 appears in the comments of posts categorized as <topic1>, ... } ), ... }, ... )}
 #
 class MultiTopicWordCounterTs:
 	def __init__(self, startDate, endDate, topics):
@@ -116,8 +115,8 @@ class Preprocess:
 			relevantTopics = self.getCommentTopics(comment)
 
 			# Don't bother if there are no relevantTopics
-			if len(relevantTopics) > 0 and comment.score > 50:
-				commentWordCounter = self.preprocessComment(comment.text)
+			if len(relevantTopics) > 0 and comment.score > 10:
+				commentWordCounter = self.preprocessComment(comment.text, mult=comment.score)
 
 				date = comment.time.date()
 				# add the comment's word count to the relevant day's wordcount in the topic
@@ -138,4 +137,4 @@ if __name__ == '__main__':
 
 	with DB() as db:
 		p = Preprocess(startDate, endDate, db)
-		p.preprocess(filename='ts-greater-than-50-score.p')
+		p.preprocess(filename='ts-greater-than-10-with-score-mult.p')
