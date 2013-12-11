@@ -1,10 +1,8 @@
-import urllib
 import datetime
-import csv
-import os
 import logging
 import itertools
 import random
+import cPickle as pickle
 
 from pybrain.structure           import FeedForwardNetwork, LinearLayer, SigmoidLayer, FullConnection, RecurrentNetwork
 from pybrain.datasets            import SupervisedDataSet
@@ -13,17 +11,14 @@ from pybrain.supervised.trainers import BackpropTrainer
 import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter
 
-from statsmodels.tsa.stattools import grangercausalitytests
-
-import numpy
-
 from Preprocess import TS_FILENAME, Preprocess, MultiTopicWordCounterTs
 from SentimentAnalysis import SentimentAnalysis
 from TimeSeries import TimeSeries
+from StockData import loadStockData
 
 
-DATASET_FILENAME = 'dataset.out'
-STOCK_DATA_FOLDER = 'stock_data'
+NN_FILENAME       = 'nn.p'
+DATASET_FILENAME  = 'dataset.out'
 
 
 # Make a global logging object.
@@ -68,15 +63,24 @@ class NeuralNet:
 		else:
 			self.buildDataSets(dataSetFilename)
 
+	# Transforms the given scoreTs in accordance with the scale used to train this nn
+	def prepareScoreTs(self, scoreTs):
+		return scoreTs.linearTranform(self.targetOffset, self.targetScalingFactor)
+
 	# Load a DataSet from the given file
 	def loadDataSets(self, filename):
 		self.testDs = SupervisedDataSet.loadFromFile('test' + filename)
 		self.trainDs = SupervisedDataSet.loadFromFile('train' + filename)
 
 	# Convenience method to return the inputs for a given day
-	def getInputs(self, date):
+	def getInputs(self, date, scoreTs=None, targetTs=None):
+		if scoreTs == None:
+			scoreTs = self.scoreTs
+		if targetTs == None:
+			targetTs = self.targetTs
+
 		timedelta = datetime.timedelta(1)
-		return tuple(itertools.chain.from_iterable((ts.pastNVals(date - timedelta, self.historySize) for ts in (self.scoreTs, self.targetTs))))
+		return tuple(itertools.chain.from_iterable((ts.pastNVals(date - timedelta, self.historySize) for ts in (scoreTs, targetTs))))
 
 	def getTrainAndTestDateLists(self):
 		fullDateList = self.targetTs.getDateList()
@@ -105,7 +109,7 @@ class NeuralNet:
 		return ds
 
 	# Train the neural net on the previously generated dataset
-	def train(self):
+	def train(self, maxEpochs=1000):
 		logit.debug("Number of training patterns: %i" % len(self.trainDs))
 		logit.debug("Input and output dimensions: %i, %i" % (self.trainDs.indim, self.trainDs.outdim))
 		logit.debug("First sample (input, target):")
@@ -115,81 +119,81 @@ class NeuralNet:
 		trainer = BackpropTrainer(self.net, dataset=self.trainDs, verbose=True)
 
 		logit.debug('Training Neural Net')
-		trainer.trainUntilConvergence(maxEpochs=1000)
+		trainer.trainUntilConvergence(maxEpochs=maxEpochs)
 		logit.debug('Finished Training Neural Net')
 		return self.net
 
 	def unscale(self, val):
 		return self.targetOffset + val / self.targetScalingFactor
 
-	def predict(self, inputs):
-		return self.unscale(self.net.activate(inputs)[0])
+	def predict(self, date, scoreTs=None, targetTs=None):
+		return self.unscale(self.net.activate(self.getInputs(date, scoreTs=scoreTs, targetTs=targetTs))[0])
 
 	# Uses the trained neural net to predict the stock in the given date range and returns a list of predicted values
-	def predictTs(self, dateList):
-		return TimeSeries({ date: self.predict(self.getInputs(date)) for date in dateList })
+	def predictTs(self, dateList, scoreTs=None, targetTs=None):
+		return TimeSeries({ date: self.predict(date, scoreTs=scoreTs, targetTs=targetTs) for date in dateList })
 
-	def plotTs(self):
-		pass
-
-	def plotResult(self):
+	def getTrainingStats(self, plot=False):
 		targetX, targetY = zip(*self.targetTs.getItems())
 		targetY = [self.unscale(y) for y in targetY]
 		actualTargetTs = self.targetTs.mapValues(self.unscale)
 
-		trainX, testX = self.getTrainAndTestDateLists()
+		trainingDates, testDates = self.getTrainAndTestDateLists()
 
-		# Configure plots
-		fig, ax = plt.subplots()
-		y_formatter = ScalarFormatter(useOffset=False)
-		ax.yaxis.set_major_formatter(y_formatter)
-		plt.subplot(211)
-		plt.plot(targetX, targetY, 'r', label='Targets')
-		plt.legend()
+		if plot:
+			# Configure plots
+			fig, ax = plt.subplots()
+			y_formatter = ScalarFormatter(useOffset=False)
+			ax.yaxis.set_major_formatter(y_formatter)
+			plt.subplot(211)
+			plt.plot(targetX, targetY, 'r', label='Targets')
+			plt.legend()
 
-		for x, color, label in ((trainX, 'g', 'Training'), (testX, 'b', 'Testing')):
-			predictedTs = self.predictTs(x)
+		for dateList, color, label in ((trainingDates, 'g', 'Training'), (testDates, 'b', 'Testing')):
+			predictedTs = self.predictTs(dateList)
+			error, mse, mape, dirAcc = self.getStats(actualTargetTs, dateList=dateList, predictedTs=predictedTs)
 
-			error = [float(predictedTs.getVal(date) - actualTargetTs.getVal(date)) for date in x]
-
-			mse = sum((e**2 for e in error)) / len(x)
 			logit.info('%s MSE: %f' % (label, mse))
-
-			mape = 0
-			avg = sum([actualTargetTs.getVal(date) for date in x]) / len(x)
-			for date in x:
-				divisor = actualTargetTs.getVal(date)
-				if divisor == 0:
-					divisor = avg
-				mape += abs(float(predictedTs.getVal(date) - actualTargetTs.getVal(date)) / divisor)
-			mape /= len(x) * 100.0
 			logit.info('%s MAPE: %f' % (label, mape))
-
-			correct = 0
-			for date in x[1:]:
-				today, yesterday = predictedTs.pastNVals(date, 2)
-				todayTarget, yesterdayTarget = actualTargetTs.pastNVals(date, 2)
-				if (today - yesterdayTarget) * (todayTarget - yesterdayTarget) > 0:
-					correct += 1
-			dirAcc = float(correct) / (len(x) - 1)
 			logit.info('%s Directional Accuracy from actual: %f' % (label, dirAcc))
 
-			# correct = 0
-			# for date in x:
-			# 	today = predictedTs.getVal(date)
-			# 	todayTarget = actualTargetTs.getVal(date)
-			# 	if today * todayTarget > 0 or (todayTarget == 0 and abs(today) < 0.001):
-			# 		correct += 1
-			# dirAcc = float(correct) / len(x)
-			# logit.info('%s Directional Accuracy: %f' % (label, dirAcc))
+			if plot:
+				# Prediction plot
+				plt.subplot(211)
+				plt.plot(dateList, predictedTs.getValueList(), color, label=label)
 
-			# Prediction plot
-			plt.subplot(211)
-			plt.plot(x, predictedTs.getValueList(), color, label=label)
+				# Error plot
+				plt.subplot(212)
+				plt.fill_between(dateList, error, facecolor=color)
 
-			# Squared Error plot
-			plt.subplot(212)
-			plt.fill_between(x, error, facecolor=color)
+	def getStats(self, actualTargetTs, dateList=None, predictedTs=None):
+		if dateList == None:
+			dateList = actualTargetTs.getDateList()
+		if predictedTs == None:
+			predictedTs = self.predictTs(dateList)
+
+		error = [float(predictedTs.getVal(date) - actualTargetTs.getVal(date)) for date in dateList]
+
+		mse = sum((e**2 for e in error)) / len(dateList)
+
+		mape = 0
+		avg = sum([actualTargetTs.getVal(date) for date in dateList]) / len(dateList)
+		for date in dateList:
+			divisor = actualTargetTs.getVal(date)
+			if divisor == 0:
+				divisor = avg
+			mape += abs(float(predictedTs.getVal(date) - actualTargetTs.getVal(date)) / divisor)
+		mape *= 100.0 / len(dateList)
+
+		correct = 0
+		for date in dateList[1:]:
+			today, yesterday = predictedTs.pastNVals(date, 2)
+			todayTarget, yesterdayTarget = actualTargetTs.pastNVals(date, 2)
+			if (today - yesterdayTarget) * (todayTarget - yesterdayTarget) > 0:
+				correct += 1
+		dirAcc = float(correct) / (len(dateList) - 1)
+
+		return error, mse, mape, dirAcc
 
 
 # Returns a feed-forward network
@@ -276,105 +280,73 @@ class StockNeuralNet:
 
 		return self.scores[stock]
 
-	# Loads stock data from file into a timeseries (list)
-	def loadStockData(self, stock):
-		filepath = os.path.join(STOCK_DATA_FOLDER, stock + '[%s,%s].csv' % (self.startDate, self.endDate))
-
-		if not os.path.exists(filepath):
-			logit.debug('Downloading Stock Data')
-
-			if not os.path.exists(STOCK_DATA_FOLDER):
-				os.makedirs(STOCK_DATA_FOLDER)
-
-			params = urllib.urlencode({         # Below is literally the worst API design. Classic Yahoo.
-				's': stock,
-				'a': self.startDate.month - 1,  # WHY
-				'b': self.startDate.day,
-				'c': self.startDate.year,
-				'd': self.endDate.month - 1,    # WHAT IS WRONG WITH YOU, YAHOO
-				'e': self.endDate.day,
-				'f': self.endDate.year,
-				'g': 'd',
-				'ignore': '.csv',               # WHAT COULD THIS POSSIBLY MEAN
-			})
-			url = 'http://ichart.yahoo.com/table.csv?%s' % params
-			try:
-				urllib.urlretrieve(url, filepath)
-			except urllib.ContentTooShortError as e:
-				outfile = open(filepath, "w")
-				outfile.write(e.content)
-				outfile.close()
-
-				print 'Error retrieving stock %s' % stock
-				return
-
-		return TimeSeries({ datetime.datetime.strptime(row['Date'], '%Y-%m-%d').date(): float(row['Close']) for row in csv.DictReader(open(filepath)) })
-
-	def generateNeuralNet(self, stock, loadDataSetFromFile=False):
-		targetTs = self.loadStockData(stock)
+	def generateNeuralNet(self, stock, loadDataSetFromFile=False, randomScoreTs=False, maxEpochs=1000):
+		logit.debug('Downloading Stock Data')
+		targetTs = loadStockData(stock, self.startDate, self.endDate)
 		scoreTs = self.loadScoreTs(stock)
+		if randomScoreTs:
+			scoreTs = scoreTs.mapValues(lambda val: random.random())
 
-		# Scale data linearly from [0,1]
-		minInput = scoreTs.getMinValue()
-		maxInput = scoreTs.getMaxValue()
-		try:
-			inpScale = 1.0 / (maxInput-minInput)
-		except ZeroDivisionError:
-			inpScale = 1
-		scaledInputTs = scoreTs.mapValues(lambda val: float(val-minInput) * inpScale)
-
-		minTarget = targetTs.getMinValue()
-		maxTarget = targetTs.getMaxValue()
-		targetScale = 1.0 / (maxTarget-minTarget)
-		scaledTargetTs = targetTs.mapValues(lambda val: float(val-minTarget) * targetScale)
+		scaledInputTs, offset, scale = scoreTs.normalize()
+		scaledTargetTs, offset, scale = targetTs.normalize()
 
 		createNet = lambda historySize: createNLayerFFNet(historySize, 5, 10)
-		nn = NeuralNet(createNet, 3, scaledInputTs, scaledTargetTs, targetScalingFactor=targetScale, targetOffset=minTarget, loadDataSetFromFile=loadDataSetFromFile)
-		nn.train()
+		nn = NeuralNet(createNet, 3, scaledInputTs, scaledTargetTs, targetScalingFactor=scale, targetOffset=offset, loadDataSetFromFile=loadDataSetFromFile)
+		nn.train(maxEpochs=maxEpochs)
 
 		return nn
 
-	def getGrangerCausality(self, stock, maxlag=20):
-		noZeros = lambda val: 0.001 if val == 0 else val
-		targetTs = self.loadStockData(stock).getDeltaTs().mapValues(noZeros)
-		scoreTs = self.loadScoreTs(stock).mapValues(noZeros)
+def loadNN(filename=NN_FILENAME):
+	return pickle.load(open(filename, 'rb'))
 
-		x = [[],[]]
-		for date in targetTs.getDateList():
-			x[0].append(targetTs.getVal(date))
-			x[1].append(scoreTs.getVal(date))
+def saveNN(nn, filename=NN_FILENAME):
+	print filename
+	pickle.dump(nn, open(filename, 'wb'))
 
-		x = numpy.transpose(numpy.asarray(x))
+def getIdStr(sentIdStr, stock):
+	return 'nn-%s-%s' % (stock, sentIdStr)
 
-		results = grangercausalitytests(x, maxlag, verbose=False)
-		pValue = {lag: results[lag][0]['params_ftest'][1] for lag in xrange(1, maxlag+1)}
-
-		return pValue
-
-
-if __name__ == '__main__':
+def genAllNNs(trainingStartDate, trainingEndDate, plot=False):
+	logit.info('Begin training NNs')
 	stocks = ['intc', 'aapl', 'msft', 'goog', 'dell'] # , 'fb', 'twtr'
 	files = ['ts-greater-than-10-with-score-mult.p', 'ts-greater-than-10-score.p', 'ts-pos-score.p', 'ts-with-score-multiplier.p', 'ts.p'] #, 'ts-pg-only-with-score-mult.p', 'ts-pg-only.p', 'ts-greater-than-50-score.p', 'ts-greater-than-100-score.p']
 
 	# for filename in files:
-	filename = 'ts-greater-than-10-with-score-mult.p' #'ts-greater-than-10-score.p'
+	filename = 'ts-greater-than-10-score.p'
 	for stock in stocks:
-		logit.info('file: %s' % filename)
-		logit.info('stock: %s' % stock)
-		# net = StockNeuralNet(datetime.date(2011, 1, 1), datetime.date(2011, 12, 31), wordCounterTsFilename=filename)
-		# pValues = net.getGrangerCausality(stock)
-		# print pValues
+		idStr = getIdStr(filename, stock)
+		logit.info('idStr: %s' % idStr)
 
-		net = StockNeuralNet(datetime.date(2011, 1, 1), datetime.date(2011, 12, 31), wordCounterTsFilename=filename)
+		net = StockNeuralNet(trainingStartDate, trainingEndDate, wordCounterTsFilename=filename)
 		nn = net.generateNeuralNet(stock, loadDataSetFromFile=False)
-		nn.plotResult()
+		nn.getTrainingStats(plot=plot)
 
-		# fig = plt.gcf()
-		# fig.canvas.set_window_title('stock %s, file %s' % (stock, filename))
-		# plt.draw()
+		saveNN(nn, filename=idStr)
 
-	# plt.show()
+		if plot:
+			fig = plt.gcf()
+			fig.canvas.set_window_title('stock %s, file %s' % (stock, filename))
+			plt.draw()
 
-	# nn = NeuralNet(createFFNet, 3, [])
-	# nn.train()
-	# actual, predicted = nn.predict(10)
+	if plot:
+		plt.show()
+
+def testGeneratedNNs(startDate, endDate):
+	logit.info('Begin testing pre-generated NNs')
+	stocks = ['intc', 'aapl', 'msft', 'goog', 'dell']
+	files = ['ts-greater-than-10-with-score-mult.p', 'ts-greater-than-10-score.p', 'ts-pos-score.p', 'ts-with-score-multiplier.p', 'ts.p'] #, 'ts-pg-only-with-score-mult.p', 'ts-pg-only.p', 'ts-greater-than-50-score.p', 'ts-greater-than-100-score.p']
+
+	# for filename in files:
+	filename = 'ts-greater-than-10-score.p'
+	for stock in stocks:
+		idStr = getIdStr(filename, stock)
+		logit.info('idStr: %s' % idStr)
+
+		nn = loadNN(filename=idStr)
+
+		# nn.getStats(targetTs)
+
+
+if __name__ == '__main__':
+	genAllNNs(datetime.date(2011, 1, 1), datetime.date(2011, 12, 31))
+	# testGeneratedNNs(datetime.date(2012, 1, 1), datetime.date(2012, 12, 31))

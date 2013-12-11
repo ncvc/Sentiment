@@ -30,6 +30,9 @@ class TimeSeries:
 
 		return vals
 
+	def getSlice(self, endDate):
+		return TimeSeries({ date: val for date, val in self.ts.items() if date < endDate })
+
 	def getVal(self, date):
 		return self.ts[date]
 
@@ -37,7 +40,7 @@ class TimeSeries:
 		return sorted(self.ts.items())
 
 	def getValueList(self):
-		return [val for date, val in sorted(self.ts.items())]
+		return [val for date, val in self.getItems()]
 
 	def mapValues(self, function):
 		return TimeSeries({date: function(value) for date, value in self.ts.items()})
@@ -47,6 +50,29 @@ class TimeSeries:
 
 	def getDateList(self):
 		return sorted(self.ts.keys())
+
+	# Scale data linearly from [0,1]
+	def normalize(self):
+		minVal = self.getMinValue()
+		maxVal = self.getMaxValue()
+		try:
+			scale = 1.0 / (maxVal-minVal)
+		except ZeroDivisionError:
+			scale = 1
+
+		return self.linearTransform(minVal, scale), minVal, scale
+
+	def linearTransform(self, offset, scale):
+		return self.mapValues(lambda val: float(val-offset) * scale)
+
+
+class TimeSpan:
+	def __init__(self, startDate, endDate):
+		self.startDate = startDate
+		self.endDate = endDate
+
+	def __iter__(self):
+		return dateIterator(self.startDate, self.endDate)
 
 
 def dateIterator(startDate, endDate, backward=False):
@@ -61,3 +87,10 @@ def dateIterator(startDate, endDate, backward=False):
 	while currentDate != endDate:
 		yield currentDate
 		currentDate += timedelta
+
+
+if __name__ == '__main__':
+	span = TimeSpan(datetime.date(2013, 1, 27), datetime.date(2013, 2, 3))
+	for date1 in span:
+		for date2 in span:
+			print date1, date2
