@@ -23,22 +23,23 @@ class Wordlist:
 
 	# Load the wordlist
 	def loadWordlist(self, filename):
-		for line in open(filename):
-			fields = line.strip().split(' ')
+		with open(filename) as f:
+			for line in f:
+				fields = line.strip().split(' ')
 
-			# Parse into a dict
-			fieldDict = {}
-			for field in fields:
-				name, value = field.split('=')
-				fieldDict[name] = value
+				# Parse into a dict
+				fieldDict = {}
+				for field in fields:
+					name, value = field.split('=')
+					fieldDict[name] = value
 
-			# Parse dict
-			isStrong = (fieldDict['type'] == 'strongsubj')   # Strongly or weakly subjective
-			# wordDict['pos'] = fieldDict['pos1']                       # Part of speech (Don't care for now)
-			isStemmed = (fieldDict['stemmed1'] == 'y')       # Is the word stemmed?
-			polarity = POLARITY[fieldDict['priorpolarity']]  # Prior polarity of the word
+				# Parse dict
+				isStrong = (fieldDict['type'] == 'strongsubj')   # Strongly or weakly subjective
+				# wordDict['pos'] = fieldDict['pos1']                       # Part of speech (Don't care for now)
+				isStemmed = (fieldDict['stemmed1'] == 'y')       # Is the word stemmed?
+				polarity = POLARITY[fieldDict['priorpolarity']]  # Prior polarity of the word
 
-			self.addWord(fieldDict['word1'], isStemmed, isStrong, polarity)
+				self.addWord(fieldDict['word1'], isStemmed, isStrong, polarity)
 
 	# Adds the word to the wordlist
 	def addWord(self, word, isStemmed, isStrong, polarity):
@@ -75,11 +76,8 @@ class Wordlist:
 
 # Uses the parsed wordlist to get a timeseries of sentiment scores
 class SentimentAnalysis:
-	def __init__(self, logit):
-		logit.debug('Sentiment Init')
+	def __init__(self):
 		self.wl = Wordlist()
-
-		self.logit = logit
 
 	# Returns the sentiment score for a given day
 	def getDayScore(self, wordCount):
@@ -102,7 +100,6 @@ class SentimentAnalysis:
 
 	# Return the score timeseries as a list
 	def getScoreTimeseries(self, wordCounterTs):
-		self.logit.debug('Analyzing Sentiment')
 		return wordCounterTs.mapValues(self.getDayScore)
 
 
@@ -110,6 +107,6 @@ if __name__ == '__main__':
 	ts = Preprocess.loadTs()
 
 	sent = SentimentAnalysis()
-	t=time.clock()
+	t = time.clock()
 	a = sent.getScoreTimeseries(TimeSeries(ts.getTopicTs('msft')))
 	print time.clock() - t

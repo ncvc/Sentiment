@@ -2,14 +2,15 @@ from TimeSeries import TimeSeries
 import os
 import csv
 import urllib
-from datetime import datetime
+from datetime import datetime, date
 
 
 STOCK_DATA_FOLDER = 'stock_data'
 
 
 # Loads stock data from file into a time series
-def loadStockData(stock, startDate, endDate):
+# TODO: This is a terrible way to store the data but it works for now
+def loadStockTs(stock, startDate, endDate):
 	filepath = os.path.join(STOCK_DATA_FOLDER, stock + '[%s,%s].csv' % (startDate, endDate))
 
 	if not os.path.exists(filepath):
@@ -31,11 +32,15 @@ def loadStockData(stock, startDate, endDate):
 		try:
 			urllib.urlretrieve(url, filepath)
 		except urllib.ContentTooShortError as e:
-			outfile = open(filepath, "w")
-			outfile.write(e.content)
-			outfile.close()
+			with open(filepath, "w") as outfile:
+				outfile.write(e.content)
 
 			print 'Error retrieving stock %s' % stock
 			return
 
-	return TimeSeries({ datetime.strptime(row['Date'], '%Y-%m-%d').date(): float(row['Close']) for row in csv.DictReader(open(filepath)) })
+	with open(filepath) as f:
+		ts = TimeSeries({ datetime.strptime(row['Date'], '%Y-%m-%d').date(): float(row['Close']) for row in csv.DictReader(f) })
+	return ts
+
+if __name__ == '__main__':
+	print loadStockTs('msft', date(2011,1,3), date(2011,1,3))

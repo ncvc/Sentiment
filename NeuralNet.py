@@ -11,10 +11,10 @@ from pybrain.supervised.trainers import BackpropTrainer
 import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter
 
-from Preprocess import TS_FILENAME, Preprocess, MultiTopicWordCounterTs
-from SentimentAnalysis import SentimentAnalysis
+from Preprocess import TS_FILENAME, MultiTopicWordCounterTs
 from TimeSeries import TimeSeries
-from StockData import loadStockData
+from StockData import loadStockTs
+from ScoreData import loadScoreTs
 
 
 NN_FILENAME       = 'nn.p'
@@ -269,21 +269,12 @@ class StockNeuralNet:
 	def __init__(self, startDate, endDate, wordCounterTsFilename=TS_FILENAME):
 		self.startDate = startDate
 		self.endDate = endDate
-		self.wordCounterTs = Preprocess.loadTs(wordCounterTsFilename)
-		self.sent = SentimentAnalysis(logit)
-		self.scores = {}
-
-	def loadScoreTs(self, stock):
-		if stock not in self.scores:
-			topicWordCountTs = self.wordCounterTs.getTopicTs(stock)
-			self.scores[stock] = self.sent.getScoreTimeseries(topicWordCountTs)
-
-		return self.scores[stock]
+		self.wordCounterTsFilename = wordCounterTsFilename
 
 	def generateNeuralNet(self, stock, loadDataSetFromFile=False, randomScoreTs=False, maxEpochs=1000):
 		logit.debug('Downloading Stock Data')
-		targetTs = loadStockData(stock, self.startDate, self.endDate)
-		scoreTs = self.loadScoreTs(stock)
+		targetTs = loadStockTs(stock, self.startDate, self.endDate)
+		scoreTs = loadScoreTs(stock, wordCounterTsFilename=self.wordCounterTsFilename)
 		if randomScoreTs:
 			scoreTs = scoreTs.mapValues(lambda val: random.random())
 
@@ -297,11 +288,13 @@ class StockNeuralNet:
 		return nn
 
 def loadNN(filename=NN_FILENAME):
-	return pickle.load(open(filename, 'rb'))
+	with open(filename, 'rb') as f:
+		nn = pickle.load(f)
+	return nn
 
 def saveNN(nn, filename=NN_FILENAME):
-	print filename
-	pickle.dump(nn, open(filename, 'wb'))
+	with open(filename, 'wb') as f:
+		pickle.dump(nn, f)
 
 def getIdStr(sentIdStr, stock):
 	return 'nn-%s-%s' % (stock, sentIdStr)

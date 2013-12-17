@@ -53,13 +53,17 @@ class Preprocess:
 
 	@classmethod
 	def loadTs(self, filename=TS_FILENAME):
-		return pickle.load(open(filename, 'rb'))
+		with open(filename, 'rb') as f:
+			ts = pickle.load(f)
+		return ts
 
 	def saveTs(self, filename=TS_FILENAME):
-		pickle.dump(self.multiTopicWordCounterTs, open(filename, 'wb'))
+		with open(filename, 'wb') as f:
+			pickle.dump(self.multiTopicWordCounterTs, f)
 
 	def loadTopics(self, filename):
-		topics = json.load(open(filename))
+		with open(filename) as f:
+			topics = json.load(f)
 		self.topicKeywordDict = { topic.lower(): [ keyword.lower() for keyword in keywords + [topic] ] for topic, keywords in topics.iteritems() }
 
 	# Helper - count the individual words in a single comment

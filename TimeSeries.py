@@ -65,6 +65,12 @@ class TimeSeries:
 	def linearTransform(self, offset, scale):
 		return self.mapValues(lambda val: float(val-offset) * scale)
 
+	def __contains__(self, item):
+		return item in self.ts
+
+	def __repr__(self):
+		return 'TimeSeries({ %s })' % (', '.join("%r: %r" % (date, val) for date, val in self.getItems()))
+
 
 class TimeSpan:
 	def __init__(self, startDate, endDate):
@@ -73,6 +79,9 @@ class TimeSpan:
 
 	def __iter__(self):
 		return dateIterator(self.startDate, self.endDate)
+
+	def __repr__(self):
+		return 'TimeSpan(%r, %r)' % (self.startDate, self.endDate)
 
 
 def dateIterator(startDate, endDate, backward=False):
@@ -90,7 +99,4 @@ def dateIterator(startDate, endDate, backward=False):
 
 
 if __name__ == '__main__':
-	span = TimeSpan(datetime.date(2013, 1, 27), datetime.date(2013, 2, 3))
-	for date1 in span:
-		for date2 in span:
-			print date1, date2
+	print TimeSeries({ date: 1 for date in TimeSpan(datetime.date(2011, 1, 29), datetime.date(2011, 2, 3)) })
